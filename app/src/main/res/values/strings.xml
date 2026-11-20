@@ -1,0 +1,18 @@
+<resources>
+    <string name="app_name">TripBudget</string>
+    <string name="tab_explore">Explore</string>
+    <string name="tab_trips">My Trips</string>
+    <string name="tab_budget">Budget &amp; Split</string>
+    <string name="tab_vault">Vault &amp; Checklist</string>
+    <string name="hero_headline">Where to Next?</string>
+    <string name="hero_subtitle">Plan global &amp; Indian escapes with smart budgets</string>
+    <string name="btn_find_destinations">Find Best Destinations</string>
+    <string name="btn_plan_trip">Plan This Trip</string>
+    <string name="btn_ai_generate">AI Auto-Generate Itinerary</string>
+    <string name="btn_add_expense">+ Add Expense</string>
+    <string name="btn_generate_story_card">Generate Story Card</string>
+    <string name="cd_toggle_theme">Toggle dark or light theme</string>
+    <string name="cd_currency_switcher">Switch display currency</string>
+    <string name="cd_export_trip">Export and share trip summary</string>
+    <string name="cd_voice_assistant">Open Gemini Live voice travel assistant</string>
+</resources>

@@ -1,0 +1,6 @@
+{
+  "name": "TripBudget",
+  "description": "Travel planning, AI itinerary builder, and group expense budgeting app for global and Indian travelers.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
