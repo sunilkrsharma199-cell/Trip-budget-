@@ -2,9 +2,6 @@ name: Build TripBudget Debug APK
 
 on:
   push:
-    branches:
-      - main
-      - master
   workflow_dispatch:
 
 jobs:
@@ -27,7 +24,7 @@ jobs:
           SDK_MANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           if [ -x "$SDK_MANAGER" ]; then
             yes | "$SDK_MANAGER" --licenses > /dev/null 2>&1 || true
-            "$SDK_MANAGER" "platforms;android-36" "build-tools;36.0.0" > /dev/null
+            yes | "$SDK_MANAGER" "platforms;android-36" "build-tools;36.0.0" > /dev/null 2>&1 || true
           fi
 
       - name: Set up Gradle 9.3.1
