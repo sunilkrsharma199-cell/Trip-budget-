@@ -1,4 +1,4 @@
-name: Build & Publish TripBudget Debug APK
+name: Build TripBudget Debug APK
 
 on:
   push:
@@ -7,12 +7,10 @@ on:
       - master
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
   build-apk:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
 
     steps:
       - name: Checkout repository
@@ -24,8 +22,13 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Accept Android SDK licenses & ensure SDK 36
+        run: |
+          SDK_MANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ -x "$SDK_MANAGER" ]; then
+            yes | "$SDK_MANAGER" --licenses > /dev/null 2>&1 || true
+            "$SDK_MANAGER" "platforms;android-36" "build-tools;36.0.0" > /dev/null
+          fi
 
       - name: Set up Gradle 9.3.1
         uses: gradle/actions/setup-gradle@v4
@@ -47,7 +50,12 @@ jobs:
           fi
 
       - name: Build Debug APK
-        run: gradle :app:assembleDebug --no-daemon --stacktrace
+        run: |
+          gradle :app:assembleDebug \
+            --no-daemon \
+            --no-configuration-cache \
+            --stacktrace \
+            -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
@@ -55,11 +63,3 @@ jobs:
           name: TripBudget-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-
-      - name: Publish Debug APK to GitHub Releases
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: debug-build-${{ github.run_number }}
-          name: TripBudget Debug APK (#${{ github.run_number }})
-          body: Automated debug APK build from GitHub Actions. Download `app-debug.apk` below to install and test on Android.
-          files: app/build/outputs/apk/debug/app-debug.apk
