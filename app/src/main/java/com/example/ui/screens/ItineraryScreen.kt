@@ -96,6 +96,7 @@ import com.example.domain.AffiliateAndMapsLinks
 import com.example.domain.RouteCalculator
 import com.example.model.AppCurrency
 import com.example.model.CurrencyFormatter
+import com.example.model.PlaceImageResolver
 import com.example.model.WeatherConditionType
 import com.example.model.WeatherForecastSummary
 import com.example.ui.components.LeafletMapCard
@@ -124,7 +125,7 @@ fun ItineraryScreen(
     weatherForecast: WeatherForecastSummary?,
     aiState: AiUiState,
     onSelectTrip: (Long) -> Unit,
-    onCreateCustomTrip: (title: String, dest: String, country: String, days: Int, budgetDisplay: Double, travelers: Int) -> Unit,
+    onCreateCustomTrip: (title: String, dest: String, country: String, days: Int, budgetDisplay: Double, travelers: Int, startingCity: String) -> Unit,
     onUpdateTripDetails: (title: String, startDate: String, endDate: String, travelers: Int, budgetDisplay: Double) -> Unit,
     onSelectDay: (Int) -> Unit,
     onAddDay: () -> Unit,
@@ -132,6 +133,7 @@ fun ItineraryScreen(
     onSaveActivity: (id: Long, day: Int, name: String, slot: String, cat: String, costDisplay: Double, notes: String) -> Unit,
     onDeleteActivity: (Long) -> Unit,
     onAiAutoGenerate: () -> Unit,
+    onLoadCuratedPlan: () -> Unit,
     onDismissAiBanner: () -> Unit,
     onShowMessage: (String) -> Unit,
     modifier: Modifier = Modifier
@@ -356,7 +358,13 @@ fun ItineraryScreen(
                                 ) {
                                     HeaderMetaChip(
                                         icon = Icons.Rounded.LocationOn,
-                                        text = "${activeTrip.destinationName}, ${activeTrip.country}"
+                                        text = if (activeTrip.startingCity.isNotBlank() &&
+                                            !activeTrip.startingCity.equals(activeTrip.destinationName, ignoreCase = true)
+                                        ) {
+                                            "${activeTrip.startingCity} → ${activeTrip.destinationName}"
+                                        } else {
+                                            "${activeTrip.destinationName}, ${activeTrip.country}"
+                                        }
                                     )
                                     HeaderMetaChip(
                                         icon = Icons.Rounded.CalendarMonth,
@@ -501,6 +509,9 @@ fun ItineraryScreen(
                                                 color = MaterialTheme.colorScheme.onSurface,
                                                 modifier = Modifier.weight(1f)
                                             )
+                                            TextButton(onClick = onLoadCuratedPlan) {
+                                                Text("Curated")
+                                            }
                                             TextButton(onClick = onAiAutoGenerate) {
                                                 Text("Retry")
                                             }
@@ -665,6 +676,7 @@ fun ItineraryScreen(
                                 centerLng = activeTrip.centerLng,
                                 activities = mapActivities,
                                 currency = currency,
+                                startingCity = activeTrip.startingCity,
                                 modifier = Modifier.weight(0.9f)
                             )
                         }
@@ -713,6 +725,7 @@ fun ItineraryScreen(
                                 centerLng = activeTrip.centerLng,
                                 activities = mapActivities,
                                 currency = currency,
+                                startingCity = activeTrip.startingCity,
                                 modifier = Modifier.padding(horizontal = 16.dp)
                             )
                         }
@@ -726,8 +739,8 @@ fun ItineraryScreen(
         NewTripDialog(
             currency = currency,
             onDismiss = { showNewTripDialog = false },
-            onConfirm = { title, dest, country, dayCount, budget, travelersCount ->
-                onCreateCustomTrip(title, dest, country, dayCount, budget, travelersCount)
+            onConfirm = { title, startingCity, dest, country, dayCount, budget, travelersCount ->
+                onCreateCustomTrip(title, dest, country, dayCount, budget, travelersCount, startingCity)
                 showNewTripDialog = false
             }
         )
@@ -985,6 +998,15 @@ private fun ActivityStopCard(
         ActivityCategory.TRANSIT -> Icons.Rounded.Train
         ActivityCategory.SIGHTSEEING -> Icons.Rounded.Place
     }
+    val stopImageUrl = remember(activity.imageUrl, activity.placeName, activity.category, destinationName) {
+        activity.imageUrl.ifBlank {
+            PlaceImageResolver.resolveActivityImageUrl(
+                placeName = activity.placeName,
+                category = activity.category,
+                destinationName = destinationName
+            )
+        }
+    }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -992,78 +1014,104 @@ private fun ActivityStopCard(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(14.dp),
-            verticalAlignment = Alignment.Top
-        ) {
+        Column {
+            // Day-wise Stop Photo Header
             Box(
                 modifier = Modifier
-                    .size(32.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary),
-                contentAlignment = Alignment.Center
+                    .fillMaxWidth()
+                    .height(136.dp)
             ) {
-                Text(
-                    text = "$stopNumber",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onPrimary,
-                    fontWeight = FontWeight.Bold
+                RemoteTravelImage(
+                    imageUrl = stopImageUrl,
+                    contentDescription = activity.placeName,
+                    modifier = Modifier.fillMaxSize()
                 )
-            }
 
-            Spacer(modifier = Modifier.width(12.dp))
-
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.secondaryContainer
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = activity.timeSlot,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                        )
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "$stopNumber",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color.Black.copy(alpha = 0.6f)
+                        ) {
+                            Text(
+                                text = activity.timeSlot,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.White,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
                     }
+
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant
+                        color = Color.Black.copy(alpha = 0.6f)
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
                                 imageVector = catIcon,
                                 contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
+                                tint = Color.White,
                                 modifier = Modifier.size(12.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
                                 text = activity.category,
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = Color.White
                             )
                         }
                     }
                 }
 
-                Text(
-                    text = activity.placeName,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(12.dp)
+                ) {
+                    Text(
+                        text = activity.placeName,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
 
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 if (activity.notes.isNotBlank()) {
                     Text(
                         text = activity.notes,
@@ -1134,8 +1182,11 @@ private fun ActivityStopCard(
                         fontWeight = FontWeight.Bold
                     )
 
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        OutlinedButton(
                             onClick = {
                                 AffiliateAndMapsLinks.openGoogleMapsNavigation(
                                     context = context,
@@ -1144,13 +1195,21 @@ private fun ActivityStopCard(
                                     label = activity.placeName
                                 )
                             },
-                            modifier = Modifier.size(40.dp)
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Rounded.Navigation,
-                                contentDescription = "Navigate in Google Maps",
+                                contentDescription = "Open in Google Maps",
                                 tint = VibrantSkyBlue,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Google Map",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = VibrantSkyBlue,
+                                fontWeight = FontWeight.SemiBold
                             )
                         }
                         IconButton(onClick = onEdit, modifier = Modifier.size(40.dp)) {
@@ -1220,9 +1279,10 @@ private fun RouteLegConnector(label: String) {
 private fun NewTripDialog(
     currency: AppCurrency,
     onDismiss: () -> Unit,
-    onConfirm: (title: String, dest: String, country: String, days: Int, budget: Double, travelers: Int) -> Unit
+    onConfirm: (title: String, startingCity: String, dest: String, country: String, days: Int, budget: Double, travelers: Int) -> Unit
 ) {
     var title by remember { mutableStateOf("") }
+    var startingCity by remember { mutableStateOf("") }
     var destination by remember { mutableStateOf("") }
     var country by remember { mutableStateOf("") }
     var daysText by remember { mutableStateOf("4") }
@@ -1231,21 +1291,28 @@ private fun NewTripDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Create New Trip") },
+        title = { Text("Create Start → Destination Trip") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
-                    label = { Text("Trip Title") },
-                    placeholder = { Text("e.g., Golden Triangle Escape") },
+                    value = startingCity,
+                    onValueChange = { startingCity = it },
+                    label = { Text("Starting City (Origin)") },
+                    placeholder = { Text("e.g., Kolkata, Delhi, Mumbai") },
                     singleLine = true
                 )
                 OutlinedTextField(
                     value = destination,
                     onValueChange = { destination = it },
                     label = { Text("Destination City") },
-                    placeholder = { Text("e.g., Jaipur or Tokyo") },
+                    placeholder = { Text("e.g., Jaipur, Goa, Tokyo") },
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text("Trip Title (Optional)") },
+                    placeholder = { Text("Auto: Kolkata → Jaipur") },
                     singleLine = true
                 )
                 OutlinedTextField(
@@ -1286,8 +1353,11 @@ private fun NewTripDialog(
             Button(
                 onClick = {
                     val dest = destination.ifBlank { "Jaipur" }
+                    val origin = startingCity.trim()
+                    val autoTitle = if (origin.isNotBlank()) "$origin → $dest" else "$dest Trip"
                     onConfirm(
-                        title.ifBlank { "$dest Trip" },
+                        title.ifBlank { autoTitle },
+                        origin,
                         dest,
                         country.ifBlank { "India" },
                         daysText.toIntOrNull() ?: 4,

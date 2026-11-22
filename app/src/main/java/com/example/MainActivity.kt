@@ -194,9 +194,18 @@ fun TripBudgetRoot(
                             currency = uiState.currency,
                             filterState = uiState.filterState,
                             destinations = uiState.filteredDestinations,
-                            onApplySearch = viewModel::updateDestinationSearch,
+                            onApplySearch = { start, destQ, maxB, days, vibe ->
+                                viewModel.updateDestinationSearch(
+                                    startingCity = start,
+                                    maxBudgetDisplayText = maxB,
+                                    durationDays = days,
+                                    vibe = vibe,
+                                    destinationQuery = destQ
+                                )
+                            },
                             onResetFilter = viewModel::resetDestinationFilter,
-                            onPlanTrip = viewModel::planTripFromDestination
+                            onPlanTrip = viewModel::planTripFromDestination,
+                            onPlanStartToDestination = viewModel::planStartToDestination
                         )
 
                         AppTab.MY_TRIPS -> ItineraryScreen(
@@ -221,6 +230,7 @@ fun TripBudgetRoot(
                             onSaveActivity = viewModel::saveActivity,
                             onDeleteActivity = viewModel::deleteActivity,
                             onAiAutoGenerate = viewModel::aiAutoGenerateItinerary,
+                            onLoadCuratedPlan = viewModel::loadCuratedDayPlan,
                             onDismissAiBanner = viewModel::dismissAiBanner,
                             onShowMessage = viewModel::showSnackbar
                         )
@@ -276,6 +286,7 @@ fun TripBudgetRoot(
             onStartVoiceSession = viewModel::startVoiceAssistant,
             onStopVoiceSession = viewModel::stopVoiceAssistant,
             onSendText = viewModel::sendVoiceTextMessage,
+            onRunVoiceCommand = viewModel::executeVoiceCommand,
             onDismiss = { showVoiceDialog = false }
         )
     }

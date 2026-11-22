@@ -20,17 +20,21 @@ object AffiliateAndMapsLinks {
     }
 
     fun openGoogleMapsNavigation(context: Context, latitude: Double, longitude: Double, label: String) {
-        val navUri = Uri.parse("google.navigation:q=$latitude,$longitude")
-        val mapIntent = Intent(Intent.ACTION_VIEW, navUri).apply {
+        val encodedLabel = Uri.encode(label.ifBlank { "Trip Stop" })
+        val geoUri = Uri.parse("geo:$latitude,$longitude?q=$latitude,$longitude($encodedLabel)")
+        val mapIntent = Intent(Intent.ACTION_VIEW, geoUri).apply {
             setPackage("com.google.android.apps.maps")
         }
         try {
             context.startActivity(mapIntent)
         } catch (_: Exception) {
-            val webUri = Uri.parse(
-                "https://www.google.com/maps/search/?api=1&query=$latitude,$longitude(${Uri.encode(label)})"
-            )
-            openUrl(context, webUri.toString())
+            val genericGeo = Intent(Intent.ACTION_VIEW, geoUri)
+            try {
+                context.startActivity(genericGeo)
+            } catch (_: Exception) {
+                val webUri = "https://www.google.com/maps/search/?api=1&query=$latitude,$longitude"
+                openUrl(context, webUri)
+            }
         }
     }
 
@@ -65,6 +69,21 @@ object AffiliateAndMapsLinks {
                 append("&waypoints=${Uri.encode(waypoints)}")
             }
             append("&travelmode=driving")
+        }
+        openUrl(context, url)
+    }
+
+    fun openIntercityGoogleMapsRoute(
+        context: Context,
+        originCity: String,
+        destinationName: String
+    ) {
+        val origin = originCity.trim()
+        val dest = destinationName.trim()
+        val url = if (origin.isNotBlank() && !origin.equals(dest, ignoreCase = true)) {
+            "https://www.google.com/maps/dir/?api=1&origin=${Uri.encode(origin)}&destination=${Uri.encode(dest)}&travelmode=driving"
+        } else {
+            "https://www.google.com/maps/search/?api=1&query=${Uri.encode(dest)}"
         }
         openUrl(context, url)
     }

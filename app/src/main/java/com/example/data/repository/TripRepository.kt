@@ -34,12 +34,20 @@ class TripRepository(private val dao: TripDao) {
         guide: DestinationGuide,
         durationDays: Int,
         budgetUsd: Double,
-        travelerNames: List<String> = listOf("You", "Travel Buddy")
+        travelerNames: List<String> = listOf("You", "Travel Buddy"),
+        startingCity: String = ""
     ): Long {
         val safeDays = durationDays.coerceIn(1, 14)
+        val origin = startingCity.trim()
+        val tripTitle = if (origin.isNotBlank() && !origin.equals(guide.name, ignoreCase = true)) {
+            "$origin → ${guide.name}"
+        } else {
+            "${guide.name} Getaway"
+        }
+
         val tripId = dao.insertTrip(
             TripEntity(
-                title = "${guide.name} Getaway",
+                title = tripTitle,
                 destinationName = guide.name,
                 country = guide.country,
                 imageUrl = guide.imageUrl,
@@ -49,40 +57,18 @@ class TripRepository(private val dao: TripDao) {
                 totalBudgetUsd = budgetUsd.coerceAtLeast(50.0),
                 vibe = guide.vibe.label,
                 centerLat = guide.centerLat,
-                centerLng = guide.centerLng
+                centerLng = guide.centerLng,
+                startingCity = origin
             )
         )
 
-        val days = (1..safeDays).map { day ->
-            TripDayEntity(
-                tripId = tripId,
-                dayNumber = day,
-                title = if (day == 1) "Arrival & ${guide.highlights.firstOrNull() ?: guide.name}"
-                else guide.highlights.getOrNull(day - 1) ?: "Local Discovery Day $day"
-            )
-        }
+        val (days, initialActivities) = com.example.model.CuratedItineraryFactory.buildDaysAndActivities(
+            tripId = tripId,
+            guide = guide,
+            durationDays = safeDays,
+            startingCity = origin
+        )
         dao.insertDays(days)
-
-        // Seed initial anchor highlights on Day 1 so the route/map immediately shows pins
-        val initialActivities = guide.highlights.take(3).mapIndexed { index, highlight ->
-            val offset = (index - 1) * 0.018
-            ActivityEntity(
-                tripId = tripId,
-                dayNumber = 1,
-                placeName = highlight,
-                timeSlot = when (index) {
-                    0 -> "Morning"
-                    1 -> "Afternoon"
-                    else -> "Evening"
-                },
-                category = if (index == 1) "Food & Dining" else "Sightseeing",
-                estimatedCostUsd = (guide.dailyAvgUsd * 0.25).coerceAtLeast(5.0),
-                notes = guide.transportTip,
-                latitude = guide.centerLat + offset,
-                longitude = guide.centerLng + (offset * 0.8),
-                sortOrder = index
-            )
-        }
         dao.insertActivities(initialActivities)
 
         dao.insertTravelers(travelerNames.map { TravelerEntity(tripId = tripId, name = it) })
@@ -101,34 +87,58 @@ class TripRepository(private val dao: TripDao) {
         country: String,
         daysCount: Int,
         budgetUsd: Double,
-        travelersCount: Int
+        travelersCount: Int,
+        startingCity: String = ""
     ): Long {
-        val guide = DestinationCatalogHelper.findGuide(destinationName)
-        return createTripFromDestination(
-            guide = guide.copy(
-                name = destinationName.ifBlank { guide.name },
+        val parsedRoute = com.example.model.PlaceImageResolver.parseOriginAndDestination(
+            rawText = destinationName,
+            fallbackOrigin = startingCity
+        )
+        val resolvedOrigin = parsedRoute.originCity
+        val resolvedDestName = parsedRoute.destinationName.ifBlank { destinationName }
+        val guide = DestinationCatalogHelper.findGuide(resolvedDestName)
+        val matchedGuide = if (guide.id == "custom") {
+            guide.copy(
+                name = resolvedDestName.ifBlank { guide.name },
                 country = country.ifBlank { guide.country }
-            ),
+            )
+        } else {
+            guide.copy(
+                country = country.ifBlank { guide.country }
+            )
+        }
+        val finalTitle = title.ifBlank {
+            if (resolvedOrigin.isNotBlank() && !resolvedOrigin.equals(matchedGuide.name, ignoreCase = true)) {
+                "$resolvedOrigin → ${matchedGuide.name}"
+            } else {
+                "${matchedGuide.name} Trip"
+            }
+        }
+
+        return createTripFromDestination(
+            guide = matchedGuide,
             durationDays = daysCount,
             budgetUsd = budgetUsd,
             travelerNames = (1..travelersCount.coerceIn(1, 6)).map { idx ->
                 if (idx == 1) "You" else "Traveler $idx"
-            }
+            },
+            startingCity = resolvedOrigin
         ).also { newId ->
             dao.updateTrip(
                 TripEntity(
                     id = newId,
-                    title = title.ifBlank { "$destinationName Trip" },
-                    destinationName = destinationName.ifBlank { guide.name },
-                    country = country.ifBlank { guide.country },
-                    imageUrl = guide.imageUrl,
+                    title = finalTitle,
+                    destinationName = matchedGuide.name,
+                    country = matchedGuide.country,
+                    imageUrl = matchedGuide.imageUrl,
                     startDate = "Day 1",
                     endDate = "Day ${daysCount.coerceIn(1, 14)}",
                     travelerCount = travelersCount.coerceIn(1, 6),
                     totalBudgetUsd = budgetUsd.coerceAtLeast(50.0),
-                    vibe = guide.vibe.label,
-                    centerLat = guide.centerLat,
-                    centerLng = guide.centerLng
+                    vibe = matchedGuide.vibe.label,
+                    centerLat = matchedGuide.centerLat,
+                    centerLng = matchedGuide.centerLng,
+                    startingCity = resolvedOrigin
                 )
             )
         }

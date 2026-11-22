@@ -29,9 +29,14 @@ import com.example.model.DestinationGuide
 import com.example.model.SuggestedPackingItem
 import com.example.model.TravelVibe
 import com.example.model.WeatherForecastSummary
+import com.example.ai.ParsedVoiceCommand
+import com.example.ai.VoiceCommandProcessor
+import com.google.firebase.Firebase
+import com.google.firebase.ai.ai
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -41,6 +46,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 
 private const val TAG = "TripBudgetViewModel"
 
@@ -60,6 +66,7 @@ sealed interface AiUiState {
 
 data class DestinationFilterState(
     val startingCity: String = "Delhi",
+    val destinationQuery: String = "",
     val maxBudgetUsd: Double? = null,
     val durationDays: Int = 5,
     val selectedVibe: TravelVibe = TravelVibe.ALL,
@@ -114,7 +121,12 @@ class TripBudgetViewModel(application: Application) : AndroidViewModel(applicati
     private val repository = TripRepository(database.tripDao())
     private val prefsRepository = UserPreferencesRepository(application)
     private val aiService = AiItineraryService()
-    private val liveAssistant = GeminiLiveAssistant()
+    private val liveAssistant = GeminiLiveAssistant(
+        onExecuteCommand = { commandText -> executeAppCommandOnly(commandText) }
+    )
+    private val quickVoiceModel by lazy {
+        Firebase.ai.generativeModel(modelName = "gemini-3.8-flash")
+    }
 
     private val localControlState = MutableStateFlow(LocalUiControlState())
 
@@ -237,15 +249,23 @@ class TripBudgetViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private fun filterDestinations(filter: DestinationFilterState): List<DestinationGuide> {
+        val destQ = filter.destinationQuery.trim().lowercase()
         return DestinationCatalog.destinations.filter { guide ->
             val vibeMatches = filter.selectedVibe == TravelVibe.ALL || guide.vibe == filter.selectedVibe
+            val destMatches = if (destQ.isBlank()) {
+                true
+            } else {
+                guide.name.lowercase().contains(destQ) ||
+                    guide.country.lowercase().contains(destQ) ||
+                    guide.highlights.any { it.lowercase().contains(destQ) }
+            }
             val budgetLimit = filter.maxBudgetUsd
             val budgetMatches = if (budgetLimit == null || budgetLimit <= 0.0) {
                 true
             } else {
                 guide.estimatedTotalUsd(filter.durationDays, filter.startingCity) <= budgetLimit
             }
-            vibeMatches && budgetMatches
+            vibeMatches && destMatches && budgetMatches
         }.sortedBy {
             it.estimatedTotalUsd(filter.durationDays, filter.startingCity)
         }
@@ -287,7 +307,8 @@ class TripBudgetViewModel(application: Application) : AndroidViewModel(applicati
         maxBudgetDisplayText: String,
         durationDays: Int,
         vibe: TravelVibe,
-        applySearch: Boolean = true
+        applySearch: Boolean = true,
+        destinationQuery: String = localControlState.value.filterState.destinationQuery
     ) {
         val currency = uiState.value.currency
         val parsedDisplay = maxBudgetDisplayText.replace(",", "").trim().toDoubleOrNull()
@@ -297,6 +318,7 @@ class TripBudgetViewModel(application: Application) : AndroidViewModel(applicati
         localControlState.value = localControlState.value.copy(
             filterState = DestinationFilterState(
                 startingCity = startingCity,
+                destinationQuery = destinationQuery,
                 maxBudgetUsd = maxBudgetUsd,
                 durationDays = durationDays.coerceIn(1, 30),
                 selectedVibe = vibe,
@@ -314,18 +336,67 @@ class TripBudgetViewModel(application: Application) : AndroidViewModel(applicati
     fun planTripFromDestination(guide: DestinationGuide) {
         val filter = uiState.value.filterState
         val estimatedUsd = guide.estimatedTotalUsd(filter.durationDays, filter.startingCity)
+        val origin = filter.startingCity.trim()
         viewModelScope.launch {
             val newTripId = repository.createTripFromDestination(
                 guide = guide,
                 durationDays = filter.durationDays,
-                budgetUsd = estimatedUsd
+                budgetUsd = estimatedUsd,
+                startingCity = origin
             )
             prefsRepository.setActiveTripId(newTripId)
+            val routeLabel = if (origin.isNotBlank() && !origin.equals(guide.name, ignoreCase = true)) {
+                "$origin → ${guide.name}"
+            } else {
+                guide.name
+            }
             localControlState.value = localControlState.value.copy(
                 selectedTab = AppTab.MY_TRIPS,
                 selectedDayNumber = 1,
                 aiState = AiUiState.Idle,
-                snackbarMessage = "${guide.name} trip created! Tap AI Auto-Generate to build full stops."
+                snackbarMessage = "$routeLabel itinerary ready with photos & Google Map stops!"
+            )
+        }
+    }
+
+    fun planStartToDestination(
+        startingCity: String,
+        destinationInput: String,
+        durationDays: Int
+    ) {
+        val parsed = com.example.model.PlaceImageResolver.parseOriginAndDestination(
+            rawText = destinationInput,
+            fallbackOrigin = startingCity
+        )
+        val destName = parsed.destinationName.ifBlank { "Jaipur" }
+        val origin = parsed.originCity.trim()
+        val guide = DestinationCatalog.findGuideByName(destName)
+        val resolvedGuide = if (guide.id == "custom") {
+            guide.copy(name = destName)
+        } else {
+            guide
+        }
+        val safeDays = durationDays.coerceIn(1, 14)
+        val estimatedUsd = resolvedGuide.estimatedTotalUsd(safeDays, origin)
+
+        viewModelScope.launch {
+            val newTripId = repository.createTripFromDestination(
+                guide = resolvedGuide,
+                durationDays = safeDays,
+                budgetUsd = estimatedUsd,
+                startingCity = origin
+            )
+            prefsRepository.setActiveTripId(newTripId)
+            val routeLabel = if (origin.isNotBlank() && !origin.equals(resolvedGuide.name, ignoreCase = true)) {
+                "$origin → ${resolvedGuide.name}"
+            } else {
+                resolvedGuide.name
+            }
+            localControlState.value = localControlState.value.copy(
+                selectedTab = AppTab.MY_TRIPS,
+                selectedDayNumber = 1,
+                aiState = AiUiState.Idle,
+                snackbarMessage = "$routeLabel day-wise trip created!"
             )
         }
     }
@@ -336,7 +407,8 @@ class TripBudgetViewModel(application: Application) : AndroidViewModel(applicati
         country: String,
         daysCount: Int,
         budgetDisplayAmount: Double,
-        travelersCount: Int
+        travelersCount: Int,
+        startingCity: String = ""
     ) {
         val budgetUsd = CurrencyFormatter.toUsdAmount(budgetDisplayAmount, uiState.value.currency)
         viewModelScope.launch {
@@ -346,12 +418,14 @@ class TripBudgetViewModel(application: Application) : AndroidViewModel(applicati
                 country = country,
                 daysCount = daysCount,
                 budgetUsd = budgetUsd,
-                travelersCount = travelersCount
+                travelersCount = travelersCount,
+                startingCity = startingCity
             )
             prefsRepository.setActiveTripId(newId)
             localControlState.value = localControlState.value.copy(
                 selectedTab = AppTab.MY_TRIPS,
                 selectedDayNumber = 1,
+                aiState = AiUiState.Idle,
                 snackbarMessage = "Created \"$title\""
             )
         }
@@ -442,7 +516,13 @@ class TripBudgetViewModel(application: Application) : AndroidViewModel(applicati
                     latitude = existing?.latitude ?: (trip.centerLat + offset),
                     longitude = existing?.longitude ?: (trip.centerLng + offset * 0.85),
                     sortOrder = existing?.sortOrder ?: currentDayActs.size,
-                    transitHint = existing?.transitHint ?: ""
+                    transitHint = existing?.transitHint ?: "",
+                    imageUrl = existing?.imageUrl?.takeIf { it.isNotBlank() }
+                        ?: com.example.model.PlaceImageResolver.resolveActivityImageUrl(
+                            placeName = placeName.trim(),
+                            category = category,
+                            destinationName = trip.destinationName
+                        )
                 )
             )
             showSnackbar(if (existingId == 0L) "Added $placeName" else "Updated $placeName")
@@ -471,7 +551,8 @@ class TripBudgetViewModel(application: Application) : AndroidViewModel(applicati
                     totalBudgetUsd = trip.totalBudgetUsd,
                     vibe = trip.vibe,
                     centerLat = trip.centerLat,
-                    centerLng = trip.centerLng
+                    centerLng = trip.centerLng,
+                    startingCity = trip.startingCity
                 )
                 repository.replaceItinerary(trip.id, result.days, result.activities)
                 localControlState.value = localControlState.value.copy(
@@ -486,10 +567,34 @@ class TripBudgetViewModel(application: Application) : AndroidViewModel(applicati
                 Log.e(TAG, "AI auto-generate failed", e)
                 localControlState.value = localControlState.value.copy(
                     aiState = AiUiState.Error(
-                        e.localizedMessage ?: "Unable to generate itinerary. Check network and try again."
+                        e.localizedMessage ?: "Unable to generate itinerary. Check network or App Check."
                     )
                 )
             }
+        }
+    }
+
+    fun loadCuratedDayPlan() {
+        val trip = uiState.value.activeTrip ?: return
+        val dayCount = uiState.value.days.size.coerceIn(1, 14)
+        val guide = DestinationCatalog.findGuideByName(trip.destinationName).let {
+            if (it.id == "custom") it.copy(name = trip.destinationName, centerLat = trip.centerLat, centerLng = trip.centerLng)
+            else it
+        }
+        viewModelScope.launch {
+            val (days, acts) = com.example.model.CuratedItineraryFactory.buildDaysAndActivities(
+                tripId = trip.id,
+                guide = guide,
+                durationDays = dayCount,
+                startingCity = trip.startingCity
+            )
+            repository.replaceItinerary(trip.id, days, acts)
+            localControlState.value = localControlState.value.copy(
+                selectedDayNumber = 1,
+                aiState = AiUiState.Success(
+                    "Loaded ${days.size}-day curated route with ${acts.size} photo-tagged stops!"
+                )
+            )
         }
     }
 
@@ -684,7 +789,134 @@ class TripBudgetViewModel(application: Application) : AndroidViewModel(applicati
 
     fun sendVoiceTextMessage(text: String) {
         viewModelScope.launch {
-            liveAssistant.sendTextMessage(text)
+            if (uiState.value.liveVoiceStatus is LiveVoiceStatus.Active) {
+                liveAssistant.sendTextMessage(text)
+            } else {
+                executeVoiceCommand(text) {}
+            }
+        }
+    }
+
+    fun executeVoiceCommand(
+        spokenText: String,
+        onSpeakReply: (String) -> Unit
+    ) {
+        val trimmed = spokenText.trim()
+        if (trimmed.isEmpty()) return
+
+        when (val parsed = VoiceCommandProcessor.parse(trimmed)) {
+            is ParsedVoiceCommand.AskTravelAssistant -> {
+                viewModelScope.launch {
+                    val activeTrip = uiState.value.activeTrip
+                    val prompt = buildString {
+                        append("You are TripBudget voice assistant. Answer concisely in 2 short sentences for spoken TTS. ")
+                        if (activeTrip != null) {
+                            append("User's active trip is '${activeTrip.title}' in ${activeTrip.destinationName}, ${activeTrip.country} ")
+                            append("with currency ${uiState.value.currency.code}. ")
+                        }
+                        append("User said: \"$trimmed\"")
+                    }
+                    try {
+                        val response = withTimeout(30_000L) {
+                            quickVoiceModel.generateContent(prompt)
+                        }
+                        val answer = response.text?.trim()
+                            ?.takeIf { it.isNotEmpty() }
+                            ?: "Sorry, I did not receive a reply."
+                        liveAssistant.addLocalExchange(trimmed, answer)
+                        onSpeakReply(answer)
+                    } catch (e: TimeoutCancellationException) {
+                        val msg = "Request timed out. Check internet connection."
+                        liveAssistant.addLocalExchange(trimmed, msg)
+                        onSpeakReply(msg)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Voice Q&A failed", e)
+                        val msg = "Cloud AI unavailable (${e.localizedMessage ?: "App Check / Network"}). Try app commands like 'Open Budget' or 'Switch to INR'."
+                        liveAssistant.addLocalExchange(trimmed, msg)
+                        onSpeakReply("Cloud AI is unavailable right now. Try commands like Open Budget or Switch to INR.")
+                    }
+                }
+            }
+            else -> {
+                val reply = runParsedVoiceAction(parsed)
+                liveAssistant.addLocalExchange(trimmed, reply)
+                onSpeakReply(reply)
+            }
+        }
+    }
+
+    private fun executeAppCommandOnly(commandText: String): String {
+        return when (val parsed = VoiceCommandProcessor.parse(commandText)) {
+            is ParsedVoiceCommand.AskTravelAssistant -> "Ready to answer in chat."
+            else -> runParsedVoiceAction(parsed)
+        }
+    }
+
+    private fun runParsedVoiceAction(parsed: ParsedVoiceCommand): String {
+        return when (parsed) {
+            is ParsedVoiceCommand.OpenTab -> {
+                selectTab(parsed.tab)
+                "Opened ${parsed.tab.label}"
+            }
+            is ParsedVoiceCommand.SetCurrency -> {
+                setCurrency(parsed.currency)
+                "Switched currency to ${parsed.currency.code}"
+            }
+            is ParsedVoiceCommand.SetDarkMode -> {
+                val isDark = parsed.darkMode
+                viewModelScope.launch { prefsRepository.setDarkMode(isDark) }
+                if (isDark) "Dark mode enabled" else "Light mode enabled"
+            }
+            is ParsedVoiceCommand.AddExpense -> {
+                val trip = uiState.value.activeTrip
+                if (trip == null) {
+                    "Create or select a trip first to log expenses."
+                } else {
+                    val payer = uiState.value.travelers.firstOrNull()?.name ?: "You"
+                    val allNames = uiState.value.travelers.map { it.name }.ifEmpty { listOf(payer) }
+                    addExpense(
+                        title = parsed.title,
+                        amountDisplay = parsed.amount,
+                        category = "Food & Dining",
+                        dateLabel = "Today",
+                        paidByName = payer,
+                        splitAmongNames = allNames
+                    )
+                    "Logged ${uiState.value.currency.symbol}${parsed.amount.toInt()} for ${parsed.title}"
+                }
+            }
+            is ParsedVoiceCommand.AddPackingItem -> {
+                if (uiState.value.activeTrip == null) {
+                    "Select a trip first to add packing items."
+                } else {
+                    addPackingItem(parsed.title, "Essentials")
+                    "Added ${parsed.title} to your packing checklist"
+                }
+            }
+            is ParsedVoiceCommand.PlanDestination -> {
+                val guide = DestinationCatalog.destinations.firstOrNull { it.id == parsed.destinationId }
+                if (guide != null) {
+                    planTripFromDestination(guide)
+                    "Planning your trip to ${guide.name}"
+                } else {
+                    "Could not find destination ${parsed.destinationName}"
+                }
+            }
+            is ParsedVoiceCommand.PlanRoute -> {
+                planStartToDestination(
+                    startingCity = parsed.startingCity,
+                    destinationInput = parsed.destinationName,
+                    durationDays = uiState.value.filterState.durationDays
+                )
+                "Planning ${parsed.startingCity} to ${parsed.destinationName} itinerary"
+            }
+            is ParsedVoiceCommand.SyncWeatherGear -> {
+                syncAllWeatherSuggestions()
+                "Synced weather-smart gear to your checklist"
+            }
+            is ParsedVoiceCommand.AskTravelAssistant -> "Processed"
         }
     }
 

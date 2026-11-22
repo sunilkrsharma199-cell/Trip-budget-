@@ -79,7 +79,8 @@ data class TripEntity(
     val vibe: String,
     val centerLat: Double,
     val centerLng: Double,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val startingCity: String = ""
 )
 
 @Entity(
@@ -125,7 +126,8 @@ data class ActivityEntity(
     val latitude: Double,
     val longitude: Double,
     val sortOrder: Int,
-    val transitHint: String = ""
+    val transitHint: String = "",
+    val imageUrl: String = ""
 )
 
 @Entity(

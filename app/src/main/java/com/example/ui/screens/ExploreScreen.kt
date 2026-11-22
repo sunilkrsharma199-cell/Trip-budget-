@@ -29,6 +29,8 @@ import androidx.compose.material.icons.rounded.FlightTakeoff
 import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.FlightLand
+import androidx.compose.material.icons.rounded.SwapVert
 import androidx.compose.material.icons.rounded.TravelExplore
 import androidx.compose.material.icons.rounded.WbSunny
 import androidx.compose.material3.Button
@@ -78,13 +80,17 @@ fun ExploreScreen(
     currency: AppCurrency,
     filterState: com.example.viewmodel.DestinationFilterState,
     destinations: List<DestinationGuide>,
-    onApplySearch: (startingCity: String, maxBudgetDisplay: String, durationDays: Int, vibe: TravelVibe) -> Unit,
+    onApplySearch: (startingCity: String, destinationQuery: String, maxBudgetDisplay: String, durationDays: Int, vibe: TravelVibe) -> Unit,
     onResetFilter: () -> Unit,
     onPlanTrip: (DestinationGuide) -> Unit,
+    onPlanStartToDestination: (startingCity: String, destinationInput: String, durationDays: Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var startingCity by remember(filterState.startingCity) {
         mutableStateOf(filterState.startingCity)
+    }
+    var destinationCity by remember(filterState.destinationQuery) {
+        mutableStateOf(filterState.destinationQuery)
     }
     var maxBudgetText by remember(currency, filterState.maxBudgetUsd) {
         mutableStateOf(
@@ -100,7 +106,8 @@ fun ExploreScreen(
         mutableStateOf(filterState.selectedVibe)
     }
 
-    val quickCities = remember { listOf("Delhi", "Ranchi", "Mumbai", "New York", "London") }
+    val quickCities = remember { listOf("Delhi", "Kolkata", "Mumbai", "Ranchi", "Bengaluru", "London") }
+    val quickDestinations = remember { listOf("Jaipur", "Goa", "Manali", "Kerala", "Bali", "Kyoto") }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val isWide = maxWidth >= 680.dp
@@ -186,27 +193,48 @@ fun ExploreScreen(
                                 modifier = Modifier.padding(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                OutlinedTextField(
-                                    value = startingCity,
-                                    onValueChange = { startingCity = it },
-                                    label = { Text("Starting City") },
-                                    placeholder = { Text("e.g., Delhi, Ranchi, New York, London") },
-                                    leadingIcon = {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    OutlinedTextField(
+                                        value = startingCity,
+                                        onValueChange = { startingCity = it },
+                                        label = { Text("Start From (Origin)") },
+                                        placeholder = { Text("e.g., Kolkata, Delhi, Mumbai") },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = Icons.Rounded.LocationOn,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary
+                                            )
+                                        },
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedBorderColor = MaterialTheme.colorScheme.primary
+                                        ),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("starting_city_input")
+                                    )
+
+                                    IconButton(
+                                        onClick = {
+                                            val prevStart = startingCity
+                                            startingCity = destinationCity
+                                            destinationCity = prevStart
+                                        },
+                                        modifier = Modifier.size(44.dp)
+                                    ) {
                                         Icon(
-                                            imageVector = Icons.Rounded.LocationOn,
-                                            contentDescription = null,
+                                            imageVector = Icons.Rounded.SwapVert,
+                                            contentDescription = "Swap start and destination",
                                             tint = MaterialTheme.colorScheme.primary
                                         )
-                                    },
-                                    singleLine = true,
-                                    shape = RoundedCornerShape(12.dp),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedBorderColor = MaterialTheme.colorScheme.primary
-                                    ),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .testTag("starting_city_input")
-                                )
+                                    }
+                                }
 
                                 // Quick origin city chips
                                 LazyRow(
@@ -217,6 +245,44 @@ fun ExploreScreen(
                                             selected = startingCity.equals(city, ignoreCase = true),
                                             onClick = { startingCity = city },
                                             label = { Text(city) },
+                                            shape = RoundedCornerShape(10.dp)
+                                        )
+                                    }
+                                }
+
+                                OutlinedTextField(
+                                    value = destinationCity,
+                                    onValueChange = { destinationCity = it },
+                                    label = { Text("Destination City (Optional)") },
+                                    placeholder = { Text("e.g., Jaipur, Goa, Manali, Bali") },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Rounded.FlightLand,
+                                            contentDescription = null,
+                                            tint = WarmSunsetCoral
+                                        )
+                                    },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = WarmSunsetCoral
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("destination_city_input")
+                                )
+
+                                // Quick destination chips
+                                LazyRow(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    items(quickDestinations) { dest ->
+                                        FilterChip(
+                                            selected = destinationCity.equals(dest, ignoreCase = true),
+                                            onClick = {
+                                                destinationCity = if (destinationCity.equals(dest, ignoreCase = true)) "" else dest
+                                            },
+                                            label = { Text("To $dest") },
                                             shape = RoundedCornerShape(10.dp)
                                         )
                                     }
@@ -305,6 +371,7 @@ fun ExploreScreen(
                                                 selectedVibe = vibe
                                                 onApplySearch(
                                                     startingCity,
+                                                    destinationCity,
                                                     maxBudgetText,
                                                     durationDays,
                                                     vibe
@@ -327,12 +394,21 @@ fun ExploreScreen(
                                 ) {
                                     Button(
                                         onClick = {
-                                            onApplySearch(
-                                                startingCity,
-                                                maxBudgetText,
-                                                durationDays,
-                                                selectedVibe
-                                            )
+                                            if (destinationCity.isNotBlank()) {
+                                                onPlanStartToDestination(
+                                                    startingCity,
+                                                    destinationCity,
+                                                    durationDays
+                                                )
+                                            } else {
+                                                onApplySearch(
+                                                    startingCity,
+                                                    destinationCity,
+                                                    maxBudgetText,
+                                                    durationDays,
+                                                    selectedVibe
+                                                )
+                                            }
                                         },
                                         colors = ButtonDefaults.buttonColors(
                                             containerColor = WarmSunsetCoral,
@@ -345,20 +421,28 @@ fun ExploreScreen(
                                             .testTag("find_destinations_button")
                                     ) {
                                         Icon(
-                                            imageVector = Icons.Rounded.Search,
+                                            imageVector = if (destinationCity.isNotBlank()) Icons.Rounded.FlightTakeoff else Icons.Rounded.Search,
                                             contentDescription = null,
                                             modifier = Modifier.size(18.dp)
                                         )
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Text(
-                                            text = stringResource(R.string.btn_find_destinations),
-                                            style = MaterialTheme.typography.labelLarge
+                                            text = if (destinationCity.isNotBlank()) {
+                                                val fromLabel = startingCity.trim().ifBlank { "Start" }
+                                                "Plan $fromLabel → ${destinationCity.trim()}"
+                                            } else {
+                                                stringResource(R.string.btn_find_destinations)
+                                            },
+                                            style = MaterialTheme.typography.labelLarge,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                     }
 
-                                    if (filterState.maxBudgetUsd != null || filterState.selectedVibe != TravelVibe.ALL) {
+                                    if (filterState.maxBudgetUsd != null || filterState.selectedVibe != TravelVibe.ALL || destinationCity.isNotBlank()) {
                                         TextButton(
                                             onClick = {
+                                                destinationCity = ""
                                                 maxBudgetText = ""
                                                 selectedVibe = TravelVibe.ALL
                                                 onResetFilter()
@@ -431,6 +515,7 @@ fun ExploreScreen(
                             )
                             OutlinedButton(
                                 onClick = {
+                                    destinationCity = ""
                                     maxBudgetText = ""
                                     selectedVibe = TravelVibe.ALL
                                     onResetFilter()

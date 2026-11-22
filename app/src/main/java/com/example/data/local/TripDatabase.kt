@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [
@@ -15,7 +17,7 @@ import androidx.room.RoomDatabase
         BookingEntity::class,
         PackingItemEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class TripDatabase : RoomDatabase() {
@@ -25,13 +27,23 @@ abstract class TripDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: TripDatabase? = null
 
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE trips ADD COLUMN startingCity TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE activities ADD COLUMN imageUrl TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         fun getInstance(context: Context): TripDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
                     context.applicationContext,
                     TripDatabase::class.java,
                     "tripbudget.db"
-                ).build().also { INSTANCE = it }
+                )
+                    .addMigrations(MIGRATION_1_2)
+                    .build()
+                    .also { INSTANCE = it }
             }
         }
     }

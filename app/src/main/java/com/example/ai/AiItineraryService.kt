@@ -78,11 +78,18 @@ class AiItineraryService {
         totalBudgetUsd: Double,
         vibe: String,
         centerLat: Double,
-        centerLng: Double
+        centerLng: Double,
+        startingCity: String = ""
     ): GeneratedItineraryResult {
         val safeDays = numDays.coerceIn(1, 7)
+        val origin = startingCity.trim()
         val prompt = buildString {
-            appendLine("Create a curated, geographically logical $safeDays-day travel itinerary for $destinationName, $country.")
+            if (origin.isNotBlank() && !origin.equals(destinationName, ignoreCase = true)) {
+                appendLine("Create a curated, geographically logical $safeDays-day travel itinerary starting from $origin to $destinationName, $country.")
+                appendLine("Include an arrival/transit stop on Day 1 describing best flight or train transit from $origin to $destinationName.")
+            } else {
+                appendLine("Create a curated, geographically logical $safeDays-day travel itinerary for $destinationName, $country.")
+            }
             appendLine("Travelers: $travelerCount people. Vibe: $vibe. Total trip budget: ~$${totalBudgetUsd.toInt()} USD.")
             appendLine("Reference city center coordinates: ($centerLat, $centerLng).")
             appendLine("For each day, include 3 to 4 ordered stops spanning Morning, Afternoon, and Evening:")
@@ -119,18 +126,25 @@ class AiItineraryService {
                     val actObj = activitiesArr.getJSONObject(j)
                     val lat = actObj.optDouble("latitude", centerLat)
                     val lng = actObj.optDouble("longitude", centerLng)
+                    val placeName = actObj.optString("placeName", "Local Highlight")
+                    val categoryLabel = ActivityCategory.fromLabel(actObj.optString("category", "Sightseeing")).label
                     parsedActivities += ActivityEntity(
                         tripId = tripId,
                         dayNumber = dayNum,
-                        placeName = actObj.optString("placeName", "Local Highlight"),
+                        placeName = placeName,
                         timeSlot = TimeSlot.fromLabel(actObj.optString("timeSlot", "Morning")).label,
-                        category = ActivityCategory.fromLabel(actObj.optString("category", "Sightseeing")).label,
+                        category = categoryLabel,
                         estimatedCostUsd = actObj.optDouble("estimatedCostUsd", 15.0).coerceAtLeast(0.0),
                         notes = actObj.optString("notes", ""),
                         latitude = if (lat.isNaN() || lat == 0.0) centerLat else lat,
                         longitude = if (lng.isNaN() || lng == 0.0) centerLng else lng,
                         sortOrder = j,
-                        transitHint = actObj.optString("transitHint", "")
+                        transitHint = actObj.optString("transitHint", ""),
+                        imageUrl = com.example.model.PlaceImageResolver.resolveActivityImageUrl(
+                            placeName = placeName,
+                            category = categoryLabel,
+                            destinationName = destinationName
+                        )
                     )
                 }
             }

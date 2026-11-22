@@ -1,5 +1,7 @@
 package com.example
 
+import com.example.ai.ParsedVoiceCommand
+import com.example.ai.VoiceCommandProcessor
 import com.example.data.local.ActivityEntity
 import com.example.data.local.ExpenseEntity
 import com.example.data.local.TravelerEntity
@@ -11,6 +13,7 @@ import com.example.model.DayWeatherForecast
 import com.example.model.DestinationCatalog
 import com.example.model.WeatherConditionType
 import com.example.model.WeatherForecastSummary
+import com.example.viewmodel.AppTab
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -104,5 +107,44 @@ class TripBudgetDomainTest {
         val titles = forecast.suggestedPackingItems.map { it.title }
         assertTrue(titles.any { it.contains("Poncho", ignoreCase = true) || it.contains("Rain", ignoreCase = true) })
         assertTrue(titles.any { it.contains("Thermal", ignoreCase = true) || it.contains("Gloves", ignoreCase = true) })
+    }
+
+    @Test
+    fun voiceCommandProcessor_parsesAppActionsAndQuestions() {
+        assertEquals(ParsedVoiceCommand.OpenTab(AppTab.BUDGET_SPLIT), VoiceCommandProcessor.parse("Open Budget"))
+        assertEquals(ParsedVoiceCommand.SetCurrency(AppCurrency.INR), VoiceCommandProcessor.parse("Switch to INR"))
+        assertEquals(ParsedVoiceCommand.SetDarkMode(true), VoiceCommandProcessor.parse("Turn on dark mode"))
+        assertEquals(ParsedVoiceCommand.AddPackingItem("Umbrella"), VoiceCommandProcessor.parse("Add packing Umbrella"))
+
+        val expense = VoiceCommandProcessor.parse("Add expense Dinner 500") as ParsedVoiceCommand.AddExpense
+        assertEquals("Dinner", expense.title)
+        assertEquals(500.0, expense.amount, 0.01)
+
+        val plan = VoiceCommandProcessor.parse("Plan trip to Goa") as ParsedVoiceCommand.PlanDestination
+        assertEquals("Goa", plan.destinationName)
+
+        val route = VoiceCommandProcessor.parse("Kolkata to Jaipur") as ParsedVoiceCommand.PlanRoute
+        assertEquals("Kolkata", route.startingCity)
+        assertEquals("Jaipur", route.destinationName)
+    }
+
+    @Test
+    fun kolkataToJaipur_curatedItineraryHasAllDaysImagesAndRealCoordinates() {
+        val parsed = com.example.model.PlaceImageResolver.parseOriginAndDestination("Kolkata to Jaipur")
+        assertEquals("Kolkata", parsed.originCity)
+        assertEquals("Jaipur", parsed.destinationName)
+
+        val jaipur = DestinationCatalog.findGuideByName(parsed.destinationName)
+        val (days, activities) = com.example.model.CuratedItineraryFactory.buildDaysAndActivities(
+            tripId = 1L,
+            guide = jaipur,
+            durationDays = 4,
+            startingCity = parsed.originCity
+        )
+        assertEquals(4, days.size)
+        assertTrue(days.all { day -> activities.any { it.dayNumber == day.dayNumber } })
+        assertTrue(activities.first().placeName.contains("Kolkata"))
+        assertTrue(activities.all { it.imageUrl.startsWith("https://") })
+        assertTrue(activities.all { it.latitude in 26.0..27.5 && it.longitude in 75.0..76.5 })
     }
 }
